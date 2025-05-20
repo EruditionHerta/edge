@@ -95,7 +95,7 @@ pip install \-r requirements.txt
 ## **自定义算法接口规范**
 
 如果您想集成自己的边缘提取算法，需要创建一个 Python 脚本 (.py 文件) 并放置在 custom\_scripts/ 目录下。该脚本必须包含一个具有以下签名的函数：
-
+```python
 def process\_image(image\_numpy\_array, device):
 """
 处理输入的图像并返回边缘提取结果。
@@ -109,6 +109,7 @@ torch.device('cpu'))，由主程序根据GPU可用性传入。
 您可以在此设备上加载和运行您的PyTorch模型。
 
 返回:tuple 或者 np.ndarray:1\. 推荐返回一个元组: \`(binary\_edge\_map, confidence\_map\_or\_None)\`\- binary\_edge\_map (np.ndarray): 最终的二值边缘图。形状为 (Height, Width)，数据类型为 np.uint8，值为 0 (背景) 或 255 (边缘)。\- confidence\_map\_or\_None (np.ndarray or None): 算法输出的置信度图 (可选)。如果提供，应为单通道灰度图 (Height, Width)，数据类型为 np.float32，值建议归一化到 \[0, 1\] 范围，表示每个像素是边缘的强度或概率。如果算法不生成置信度图，则返回 None。此图用于生成 PR 曲线。2\. 为了向后兼容或简化，也可以只返回 \`binary\_edge\_map\` (np.ndarray)。这种情况下，软件将无法为该算法生成 PR 曲线。"""\# 您的算法实现...\# 例如:\# processed\_binary\_map \= ...\# processed\_confidence\_map \= ... (如果适用)\# return processed\_binary\_map, processed\_confidence\_mappass
+```
 **示例自定义脚本**:
 
 * custom\_scripts/my\_pytorch\_edge\_detector.py: 一个简单的 PyTorch 模型示例。
