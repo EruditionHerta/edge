@@ -35,45 +35,26 @@ EdgeEval Pro 是一款用于图像边缘提取算法的综合性评价软件。�
 
 ## **项目结构**
 
-EdgeEvalPro/
-
-├── main.py                     \# 主程序入口
-
-├── gui/                        \# GUI 相关模块
-
-│   ├── \_\_init\_\_.py
-
-│   ├── main\_window.py          \# 主窗口UI和核心交互逻辑
-
-│   └── matplotlib\_widget.py    \# Matplotlib嵌入PyQt5的自定义控件
-
-├── core/                       \# 核心功能模块
-
-│   ├── \_\_init\_\_.py
-
-│   ├── data\_loader.py          \# 数据集加载与图像转换
-
-│   ├── algorithms\_builtin.py   \# 内置算法实现
-
-│   ├── custom\_algorithm\_handler.py \# 自定义算法加载与执行逻辑
-
-│   └── evaluation.py           \# 评价指标计算与PR曲线数据生成
-
-├── dataset/                    \# 存放BDSD500基准数据集
-
-│   ├── data/                   \# 存放原始图像 (例如 1.jpg, 2.jpg, ...)
-
-│   └── bon/                    \# 存放对应的真实边缘图 (例如 1.jpg, 2.jpg, ...)
-
-├── custom\_scripts/             \# 存放用户自定义算法脚本的示例目录
-
-│   ├── my\_pytorch\_edge\_detector.py \# 一个简单的PyTorch自定义脚本示例
-
-│   └── vgg16\_edge\_detector.py      \# 使用VGG16提取边缘的自定义脚本示例
-
-└── requirements.txt            \# 项目依赖的Python包列表
-
-└── README.md                   \# 本文档
+EdgeEvalPro/  
+├── main.py                     # 主程序入口  
+├── gui/                        # GUI 相关模块  
+│   ├── __init__.py  
+│   ├── main_window.py          # 主窗口UI和核心交互逻辑  
+│   └── matplotlib_widget.py    # Matplotlib嵌入PyQt5的自定义控件  
+├── core/                       # 核心功能模块  
+│   ├── __init__.py  
+│   ├── data_loader.py          # 数据集加载与图像转换  
+│   ├── algorithms_builtin.py   # 内置算法实现  
+│   ├── custom_algorithm_handler.py # 自定义算法加载与执行逻辑  
+│   └── evaluation.py           # 评价指标计算与PR曲线数据生成  
+├── dataset/                    # 存放BDSD500基准数据集  
+│   ├── data/                   # 存放原始图像 (例如 1.jpg, 2.jpg, ...)  
+│   └── bon/                    # 存放对应的真实边缘图 (例如 1.jpg, 2.jpg, ...)  
+├── custom_scripts/             # 存放用户自定义算法脚本的示例目录  
+│   ├── my_pytorch_edge_detector.py # 一个简单的PyTorch自定义脚本示例  
+│   └── vgg16_edge_detector.py      # 使用VGG16提取边缘的自定义脚本示例  
+├── requirements.txt            # 项目依赖的Python包列表  
+└── README.md                   # 本文档  
 
 
 ## **环境要求**
