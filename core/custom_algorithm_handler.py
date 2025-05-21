@@ -23,18 +23,18 @@ def run_custom_script(script_path, image_cv, device_str=None):
         str: 错误信息 (如果有)，否则为 None。
     """
     if not os.path.exists(script_path):
-        return None, f"自定义脚本未找到: {script_path}"
+        return None, None, f"自定义脚本未找到: {script_path}"
 
     try:
         # 从文件路径加载模块规范
         spec = importlib.util.spec_from_file_location("custom_module", script_path)
         if spec is None or spec.loader is None:  # 检查 spec 和 loader 是否有效
-            return None, f"无法为自定义脚本加载规范: {script_path}"
+            return None, f"无法为自定义脚本加载规范: {script_path}", None
         custom_module = importlib.util.module_from_spec(spec)  # 根据规范创建模块
         spec.loader.exec_module(custom_module)  # 执行模块代码
 
         if not hasattr(custom_module, "process_image"):
-            return None, "自定义脚本必须包含 'process_image(image_numpy_array, device)' 函数。"
+            return None, None, "自定义脚本必须包含 'process_image(image_numpy_array, device)' 函数。"
 
         # 确定使用的设备 (GPU 或 CPU)
         if device_str:
@@ -51,7 +51,7 @@ def run_custom_script(script_path, image_cv, device_str=None):
         edge_map = custom_module.process_image(image_to_process, device)
 
         if not isinstance(edge_map, np.ndarray):
-            return None, "自定义脚本的 process_image 函数未返回 NumPy 数组。"
+            return None, None, "自定义脚本的 process_image 函数未返回 NumPy 数组。"
 
         # 确保输出是二值的 (0 或 255) 2D 灰度图像
         if edge_map.ndim == 3 and edge_map.shape[2] == 3:  # 如果是 BGR 图像
@@ -60,7 +60,7 @@ def run_custom_script(script_path, image_cv, device_str=None):
             edge_map = edge_map.squeeze(axis=2)  # 移除单维度
 
         if edge_map.ndim != 2:
-            return None, "自定义脚本的输出必须是 2D 灰度图像。"
+            return None, None, "自定义脚本的输出必须是 2D 灰度图像。"
 
         # 二值化处理: 确保输出是 0 或 255
         # 假设非零值为边缘。
@@ -74,14 +74,14 @@ def run_custom_script(script_path, image_cv, device_str=None):
             # 这里假设大于1的任何值都应该是边缘(255)
             _, edge_map_binary = cv2.threshold(edge_map.astype(np.uint8), 1, 255, cv2.THRESH_BINARY)
 
-        return edge_map_binary, None
+        return edge_map_binary, None, None
 
     except Exception as e:
         import traceback  # 导入 traceback 模块
         tb_str = traceback.format_exc()  # 获取详细的 traceback 信息
         error_message = f"执行自定义脚本时出错: {str(e)}\nTraceback:\n{tb_str}"
         print(error_message)  # 在控制台打印详细错误，方便调试
-        return None, f"执行自定义脚本时出错: {str(e)}"  # 返回给GUI的可以是简化错误信息
+        return None, None, f"执行自定义脚本时出错: {str(e)}"  # 返回给GUI的可以是简化错误信息
 
 
 if __name__ == '__main__':

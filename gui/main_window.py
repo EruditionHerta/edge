@@ -485,8 +485,8 @@ class MainWindow(QMainWindow):
         row = 0
         ordered_keys = [
             "TP", "FP", "FN",
-            "查准率 (Precision)", "查全率 (Recall)", "F1分数 (F1-Score)",
-            "交并比 (IoU)", "SSIM", "PSNR (dB)"
+            "Precision", "Recall", "F1-Score",
+            "IoU", "SSIM", "PSNR (dB)"
         ]
         for key in ordered_keys:
             if key in metrics_dict:
@@ -591,8 +591,8 @@ class MainWindow(QMainWindow):
                 metrics_list = []
                 ordered_keys = [  # 与表格显示顺序一致
                     "TP", "FP", "FN",
-                    "查准率 (Precision)", "查全率 (Recall)", "F1分数 (F1-Score)",
-                    "交并比 (IoU)", "SSIM", "PSNR (dB)"
+                    "Precision", "Recall", "F1-Score",
+                    "IoU", "SSIM", "PSNR (dB)"
                 ]
                 for key in ordered_keys:
                     if key in self.current_displayed_metrics:

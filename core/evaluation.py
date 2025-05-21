@@ -47,10 +47,10 @@ def calculate_pixel_metrics(predicted_edge_map, ground_truth_map):
 
     return {
         "TP": int(TP), "FP": int(FP), "FN": int(FN),
-        "查准率 (Precision)": float(precision),
-        "查全率 (Recall)": float(recall),
-        "F1分数 (F1-Score)": float(f1_score),
-        "交并比 (IoU)": float(iou)
+        "Precision": float(precision),
+        "Recall": float(recall),
+        "F1-Score": float(f1_score),
+        "IoU": float(iou)
     }
 
 
