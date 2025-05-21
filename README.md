@@ -68,29 +68,29 @@ EdgeEvalPro/
   * torch (1.13.1+cu116)
   * torchvision (0.14.1+cu116)
   * scikit-image (0.24.0)
-  * Pillow
 * GPU支持: CUDA 11.6
 
 您可以通过以下命令安装依赖：
+```bash
+pip install -r requirements.txt
+```
 
-pip install \-r requirements.txt
-
-对于 PyTorch，建议访问其官网根据您的 CUDA 版本选择合适的安装命令。
+对于 PyTorch，您需要访问其官网，根据您的 CUDA 版本选择合适的安装命令。
+```
+https://pytorch.org/get-started/previous-versions/
+```
 
 ## **安装与运行**
 
 1. **克隆或下载项目**:
    获取项目所有文件。
-2. **准备数据集**:
-   * 在项目根目录下创建 dataset 文件夹。
-   * 在 dataset 文件夹内创建 data 和 bon 两个子文件夹。
-   * 将您的原始图像 (例如 1.jpg, 2.jpg, ...) 放入 dataset/data/ 文件夹。
-   * 将对应的真实边缘图 (Ground Truth，同样命名为 1.jpg, 2.jpg, ...) 放入 dataset/bon/ 文件夹。真实边缘图应为二值图像（例如，黑色背景，白色边缘）。
-3. **安装依赖**:
+2. **安装依赖**:
    如上所述，使用 pip install \-r requirements.txt 安装所需库。确保 PyTorch 安装正确并能被您的系统识别（特别是GPU版本）。
-4. **运行程序**:
+3. **运行程序**:
    在项目根目录下，执行以下命令：
+   ```bash
    python main.py
+   ```
 
 ## **自定义算法接口规范**
 

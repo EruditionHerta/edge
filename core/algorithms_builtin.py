@@ -20,7 +20,7 @@ def apply_canny(image_cv, threshold1=100, threshold2=200, aperture_size=3, l2_gr
     edges = cv2.Canny(gray, threshold1, threshold2,
                       apertureSize=aperture_size,
                       L2gradient=l2_gradient)
-    return edges
+    return edges, None
 
 
 def apply_sobel(image_cv, ksize=3, scale=1, delta=0, ddepth=cv2.CV_16S, threshold_val=50):
@@ -48,7 +48,7 @@ def apply_sobel(image_cv, ksize=3, scale=1, delta=0, ddepth=cv2.CV_16S, threshol
     grad = cv2.addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0)  # 合并梯度
 
     _, edges = cv2.threshold(grad, threshold_val, 255, cv2.THRESH_BINARY)  # 应用阈值得到二值边缘图
-    return edges
+    return edges, None
 
 
 def apply_laplacian(image_cv, ksize=3, scale=1, delta=0, ddepth=cv2.CV_16S, threshold_val=20):
@@ -71,7 +71,7 @@ def apply_laplacian(image_cv, ksize=3, scale=1, delta=0, ddepth=cv2.CV_16S, thre
     abs_laplacian = cv2.convertScaleAbs(laplacian)  # 计算拉普拉斯梯度的绝对值
 
     _, edges = cv2.threshold(abs_laplacian, threshold_val, 255, cv2.THRESH_BINARY)  # 应用阈值得到二值边缘图
-    return edges
+    return edges, None
 
 
 if __name__ == '__main__':

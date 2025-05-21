@@ -1,299 +1,300 @@
 # gui/main_window.py
 import sys
 import os
+import pandas as pd  # 导入 pandas 用于 CSV 导出
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QListWidget, QComboBox, QPushButton, QLabel, QGroupBox, QGridLayout,
                              QFileDialog, QMessageBox, QTableWidget, QTableWidgetItem, QAbstractItemView,
                              QSplitter, QLineEdit, QFormLayout, QTabWidget, QTextEdit)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QPixmap, QFont  # QFont 未在此版本中使用，可移除
+import cv2
 
+# 从项目中导入模块
 from core.data_loader import get_dataset_image_ids, load_image_and_ground_truth, cv_to_qpixmap
 from core.algorithms_builtin import apply_canny, apply_sobel, apply_laplacian
 from core.custom_algorithm_handler import run_custom_script
-from core.evaluation import evaluate_all_metrics  # 更改为导入新的总评价函数
+from core.evaluation import evaluate_all_metrics
 from gui.matplotlib_widget import MatplotlibWidget
 
 
-# --- 用于耗时操作的工作线程 ---
+# --- 用于耗时操作的工作线程 (与之前相同) ---
 class ProcessingThread(QThread):
-    # 定义信号，参数为 (结果图像CV格式, 指标字典, 错误信息字符串)
-    finished_signal = pyqtSignal(object, object, object)
+    finished_signal = pyqtSignal(object, object, object, object, object)
 
     def __init__(self, original_img_cv, ground_truth_cv, algorithm_name, params):
         super().__init__()
         self.original_img_cv = original_img_cv
         self.ground_truth_cv = ground_truth_cv
         self.algorithm_name = algorithm_name
-        self.params = params  # 算法参数字典
+        self.params = params
 
     def run(self):
-        """线程执行的函数，进行图像处理和评价"""
-        result_img_cv = None
-        metrics = None
+        binary_result_cv = None
+        confidence_map_cv = None
+        metrics_dict = None
+        pr_recalls = None
+        pr_precisions = None
         error_str = None
 
         try:
             if self.original_img_cv is None:
                 error_str = "原始图像未加载。"
-                self.finished_signal.emit(None, None, error_str)
+                self.finished_signal.emit(None, None, None, None, error_str)
                 return
 
-            # 根据算法名称选择并执行算法
+            output_from_algo = None
             if self.algorithm_name == "Canny":
-                result_img_cv = apply_canny(self.original_img_cv,
-                                            self.params.get('threshold1', 100),
-                                            self.params.get('threshold2', 200),
-                                            self.params.get('aperture_size', 3))
+                binary_result_cv, confidence_map_cv = apply_canny(self.original_img_cv,
+                                                                  self.params.get('threshold1', 100),
+                                                                  self.params.get('threshold2', 200),
+                                                                  self.params.get('aperture_size', 3))
             elif self.algorithm_name == "Sobel":
-                result_img_cv = apply_sobel(self.original_img_cv,
-                                            self.params.get('ksize', 3),
-                                            threshold_val=self.params.get('threshold_val', 50))
+                binary_result_cv, confidence_map_cv = apply_sobel(self.original_img_cv,
+                                                                  self.params.get('ksize', 3),
+                                                                  threshold_val=self.params.get('threshold_val', 50))
             elif self.algorithm_name == "Laplacian":
-                result_img_cv = apply_laplacian(self.original_img_cv,
-                                                self.params.get('ksize', 3),
-                                                threshold_val=self.params.get('threshold_val', 20))
+                binary_result_cv, confidence_map_cv = apply_laplacian(self.original_img_cv,
+                                                                      self.params.get('ksize', 3),
+                                                                      threshold_val=self.params.get('threshold_val',
+                                                                                                    20))
             elif self.algorithm_name == "Custom" and 'script_path' in self.params:
                 script_path = self.params['script_path']
                 if not script_path or not os.path.exists(script_path):
                     error_str = f"自定义脚本路径无效或未设置: {script_path}"
                 else:
-                    # 调用自定义脚本处理器
-                    result_img_cv, custom_error = run_custom_script(script_path, self.original_img_cv.copy())
+                    binary_result_cv, confidence_map_cv, custom_error = run_custom_script(
+                        script_path,
+                        self.original_img_cv.copy()
+                    )
                     if custom_error:
                         error_str = f"自定义脚本错误: {custom_error}"
             else:
                 error_str = f"未知算法或缺少参数: {self.algorithm_name}"
 
-            # 如果算法成功生成结果图像，并且有真实边缘图，则进行评价
-            if result_img_cv is not None and self.ground_truth_cv is not None:
-                metrics = evaluate_all_metrics(result_img_cv, self.ground_truth_cv)  # 使用新的评价函数
-                if "错误" in metrics and metrics["错误"]:  # 检查评价过程中是否有错误
-                    error_str = (error_str + "; " if error_str else "") + metrics["错误"]
-                    metrics = None  # 如果评价出错，则指标无效
-            elif result_img_cv is None and not error_str:  # 算法未生成图像，但之前没有错误报告
-                error_str = "算法未生成输出图像。"
+            if binary_result_cv is not None and self.ground_truth_cv is not None:
+                metrics_dict = evaluate_all_metrics(binary_result_cv, self.ground_truth_cv)
+                if "错误" in metrics_dict and metrics_dict["错误"]:
+                    current_error = metrics_dict["错误"]
+                    error_str = (error_str + "; " if error_str else "") + f"二值图评价错误: {current_error}"
+                    metrics_dict = None
+            elif binary_result_cv is None and not error_str:
+                error_str = (error_str + "; " if error_str else "") + "算法未生成二值输出图像。"
 
-            # 如果真实边缘图为空，则无法评价
-            if self.ground_truth_cv is None and result_img_cv is not None:
-                error_str = (error_str + "; " if error_str else "") + "真实边缘图未加载，无法进行评价。"
-                metrics = None  # 确保指标为空
+            if self.ground_truth_cv is None and binary_result_cv is not None:
+                error_str = (error_str + "; " if error_str else "") + "真实边缘图未加载，无法评价标准指标。"
+                metrics_dict = None
 
+            if confidence_map_cv is not None and self.ground_truth_cv is not None:
+                print("[处理线程] 1")
+                pr_recalls = None
+                pr_precisions = None
+                if pr_recalls is None or pr_precisions is None:
+                    print("[处理线程] 1")
+                    pr_error_msg = "传统算子不建议生成PR曲线图"
+                    error_str = (error_str + "; " if error_str else "") + pr_error_msg
+                else:
+                    print("1")
+
+            elif confidence_map_cv is None and not error_str:
+                pass
+            elif self.ground_truth_cv is None and confidence_map_cv is not None:
+                pr_error_msg = "真实边缘图未加载，无法生成PR曲线。"
+                error_str = (error_str + "; " if error_str else "") + pr_error_msg
 
         except Exception as e:
             import traceback
-            error_str = f"处理过程中发生错误: {str(e)}\n{traceback.format_exc()}"
-            result_img_cv = None
-            metrics = None
+            error_str = f"处理过程中发生严重错误: {str(e)}\n{traceback.format_exc()}"
+            binary_result_cv = None
+            metrics_dict = None
+            pr_recalls = None
+            pr_precisions = None
 
-        self.finished_signal.emit(result_img_cv, metrics, error_str)  # 发送处理完成信号
+        self.finished_signal.emit(binary_result_cv, metrics_dict, pr_recalls, pr_precisions, error_str)
 
 
 class MainWindow(QMainWindow):
-    IMAGE_DISPLAY_WIDTH = 300  # 图像显示区域的宽度
-    IMAGE_DISPLAY_HEIGHT = 300  # 图像显示区域的高度
+    IMAGE_DISPLAY_WIDTH = 300
+    IMAGE_DISPLAY_HEIGHT = 300
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("EdgeEval Pro - 图像边缘提取评价器")
-        self.setGeometry(100, 100, 1250, 750)  # 窗口初始位置和大小
+        self.setGeometry(100, 100, 1250, 800)  # 稍微增加高度以容纳导出按钮
 
-        self.current_original_cv = None  # 当前加载的 OpenCV 格式原始图像
-        self.current_ground_truth_cv = None  # 当前加载的 OpenCV 格式真实边缘图
-        self.current_result_cv = None  # 当前算法生成的 OpenCV 格式结果图像
-        self.custom_script_path = ""  # 自定义算法脚本的路径
-        self.processing_thread = None  # 用于处理的子线程
+        self.current_original_cv = None
+        self.current_ground_truth_cv = None
+        self.current_result_cv = None  # 存储算法输出的二值边缘图 (OpenCV 格式)
+        self.current_displayed_metrics = None  # 存储当前显示的指标字典
+        self.custom_script_path = ""
+        self.processing_thread = None
 
-        self._init_ui()  # 初始化用户界面
-        self.load_dataset_list()  # 加载数据集图像列表
+        self._init_ui()
+        self.load_dataset_list()
 
     def _init_ui(self):
-        """初始化用户界面元素。"""
-        main_widget = QWidget()  # 主窗口的中心部件
+        main_widget = QWidget()
         self.setCentralWidget(main_widget)
-        main_layout = QHBoxLayout(main_widget)  # 主布局为水平布局
+        main_layout = QHBoxLayout(main_widget)
 
-        # --- 左侧面板 (控制区域) ---
         left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)  # 左侧面板使用垂直布局
-        left_panel.setFixedWidth(380)  # 设置左侧面板固定宽度
+        left_layout = QVBoxLayout(left_panel)
+        left_panel.setFixedWidth(380)
 
-        # 数据集图像列表区域
+        # --- 数据集列表 (与之前相同) ---
         dataset_group = QGroupBox("数据集图像")
         dataset_layout = QVBoxLayout()
-        self.image_list_widget = QListWidget()  # 用于显示图像 ID 的列表
-        self.image_list_widget.currentTextChanged.connect(self.on_image_selected)  # 列表项改变时触发
+        self.image_list_widget = QListWidget()
+        self.image_list_widget.currentTextChanged.connect(self.on_image_selected)
         dataset_layout.addWidget(self.image_list_widget)
         dataset_group.setLayout(dataset_layout)
         left_layout.addWidget(dataset_group)
 
-        # 算法选择区域
+        # --- 算法选择与参数 (与之前相同) ---
         algo_group = QGroupBox("算法选择与参数")
-        algo_form_layout = QFormLayout()  # 使用表单布局方便标签和控件对齐
-
-        self.algo_combo = QComboBox()  # 下拉框选择算法
+        algo_form_layout = QFormLayout()
+        self.algo_combo = QComboBox()
         self.algo_combo.addItems(["Canny", "Sobel", "Laplacian", "Custom"])
-        self.algo_combo.currentTextChanged.connect(self.on_algo_changed)  # 算法改变时触发
+        self.algo_combo.currentTextChanged.connect(self.on_algo_changed)
         algo_form_layout.addRow("选择算法:", self.algo_combo)
-
-        # Canny 算子参数组
-        self.canny_params_group = QGroupBox("Canny 参数")
-        canny_form = QFormLayout()
-        self.canny_thresh1 = QLineEdit("100")  # Canny 第一个阈值
-        self.canny_thresh2 = QLineEdit("200")  # Canny 第二个阈值
-        self.canny_aperture = QComboBox()  # Canny 孔径大小
-        self.canny_aperture.addItems(["3", "5", "7"])
-        canny_form.addRow("阈值1:", self.canny_thresh1)
-        canny_form.addRow("阈值2:", self.canny_thresh2)
-        canny_form.addRow("孔径大小:", self.canny_aperture)
+        # Canny, Sobel, Laplacian, Custom 参数组 (与之前相同)
+        self.canny_params_group = QGroupBox("Canny 参数")  # ... (内容同前)
+        canny_form = QFormLayout();
+        self.canny_thresh1 = QLineEdit("100");
+        self.canny_thresh2 = QLineEdit("200");
+        self.canny_aperture = QComboBox();
+        self.canny_aperture.addItems(["3", "5", "7"]);
+        canny_form.addRow("阈值1:", self.canny_thresh1);
+        canny_form.addRow("阈值2:", self.canny_thresh2);
+        canny_form.addRow("孔径大小:", self.canny_aperture);
         self.canny_params_group.setLayout(canny_form)
         algo_form_layout.addRow(self.canny_params_group)
-
-        # Sobel 算子参数组
-        self.sobel_params_group = QGroupBox("Sobel 参数")
-        sobel_form = QFormLayout()
-        self.sobel_ksize = QComboBox()  # Sobel 核大小
-        self.sobel_ksize.addItems(["3", "5", "7"])  # ksize 必须是奇数
-        self.sobel_threshold = QLineEdit("50")  # Sobel 二值化阈值
-        sobel_form.addRow("核大小 (ksize):", self.sobel_ksize)
-        sobel_form.addRow("二值化阈值:", self.sobel_threshold)
+        self.sobel_params_group = QGroupBox("Sobel 参数");  # ... (内容同前)
+        sobel_form = QFormLayout();
+        self.sobel_ksize = QComboBox();
+        self.sobel_ksize.addItems(["3", "5", "7"]);
+        self.sobel_threshold = QLineEdit("50");
+        sobel_form.addRow("核大小 (ksize):", self.sobel_ksize);
+        sobel_form.addRow("二值化阈值:", self.sobel_threshold);
         self.sobel_params_group.setLayout(sobel_form)
-        algo_form_layout.addRow(self.sobel_params_group)
-        self.sobel_params_group.setVisible(False)  # 初始隐藏
-
-        # Laplacian 算子参数组
-        self.laplacian_params_group = QGroupBox("Laplacian 参数")
-        laplacian_form = QFormLayout()
-        self.laplacian_ksize = QComboBox()  # Laplacian 核大小
-        self.laplacian_ksize.addItems(["1", "3", "5", "7"])
-        self.laplacian_threshold = QLineEdit("20")  # Laplacian 二值化阈值
-        laplacian_form.addRow("核大小 (ksize):", self.laplacian_ksize)
-        laplacian_form.addRow("二值化阈值:", self.laplacian_threshold)
+        algo_form_layout.addRow(self.sobel_params_group);
+        self.sobel_params_group.setVisible(False)
+        self.laplacian_params_group = QGroupBox("Laplacian 参数");  # ... (内容同前)
+        laplacian_form = QFormLayout();
+        self.laplacian_ksize = QComboBox();
+        self.laplacian_ksize.addItems(["1", "3", "5", "7"]);
+        self.laplacian_threshold = QLineEdit("20");
+        laplacian_form.addRow("核大小 (ksize):", self.laplacian_ksize);
+        laplacian_form.addRow("二值化阈值:", self.laplacian_threshold);
         self.laplacian_params_group.setLayout(laplacian_form)
-        algo_form_layout.addRow(self.laplacian_params_group)
-        self.laplacian_params_group.setVisible(False)  # 初始隐藏
-
-        # 自定义算法组
-        self.custom_algo_group = QGroupBox("自定义算法")
-        custom_algo_layout_inner = QVBoxLayout()  # 这里用 QVBoxLayout 更合适
-        self.load_script_button = QPushButton("加载 Python 脚本 (.py)")
-        self.load_script_button.clicked.connect(self.load_custom_script)
-        self.custom_script_label = QLabel("未加载脚本。")  # 显示已加载脚本的名称
-        self.custom_script_label.setWordWrap(True)  # 自动换行
-        custom_algo_layout_inner.addWidget(self.load_script_button)
-        custom_algo_layout_inner.addWidget(self.custom_script_label)
+        algo_form_layout.addRow(self.laplacian_params_group);
+        self.laplacian_params_group.setVisible(False)
+        self.custom_algo_group = QGroupBox("自定义算法");  # ... (内容同前)
+        custom_algo_layout_inner = QVBoxLayout();
+        self.load_script_button = QPushButton("加载 Python 脚本 (.py)");
+        self.load_script_button.clicked.connect(self.load_custom_script);
+        self.custom_script_label = QLabel("未加载脚本。");
+        self.custom_script_label.setWordWrap(True);
+        custom_algo_layout_inner.addWidget(self.load_script_button);
+        custom_algo_layout_inner.addWidget(self.custom_script_label);
         self.custom_algo_group.setLayout(custom_algo_layout_inner)
-        algo_form_layout.addRow(self.custom_algo_group)  # 添加到主算法表单布局
-        self.custom_algo_group.setVisible(False)  # 初始隐藏
-
-        algo_group.setLayout(algo_form_layout)  # 设置算法选择区域的布局
+        algo_form_layout.addRow(self.custom_algo_group);
+        self.custom_algo_group.setVisible(False)
+        algo_group.setLayout(algo_form_layout)
         left_layout.addWidget(algo_group)
 
-        self.run_button = QPushButton("运行评价")  # “运行/评价”按钮
+        # --- 运行按钮 (与之前相同) ---
+        self.run_button = QPushButton("运行评价")
         self.run_button.setFixedHeight(40)
         self.run_button.setStyleSheet("QPushButton { font-size: 16px; background-color: lightgreen; }")
         self.run_button.clicked.connect(self.run_evaluation)
         left_layout.addWidget(self.run_button)
 
-        left_layout.addStretch()  # 添加伸缩因子，将控件推到顶部
+        # --- 新增：结果导出组 ---
+        export_group = QGroupBox("结果导出")
+        export_layout = QVBoxLayout()
+        self.export_image_button = QPushButton("导出边缘图 (PNG)")
+        self.export_image_button.clicked.connect(self.handle_export_edge_image)
+        self.export_image_button.setEnabled(False)  # 初始禁用
+        export_layout.addWidget(self.export_image_button)
+
+        self.export_metrics_button = QPushButton("导出指标 (CSV)")
+        self.export_metrics_button.clicked.connect(self.handle_export_metrics_csv)
+        self.export_metrics_button.setEnabled(False)  # 初始禁用
+        export_layout.addWidget(self.export_metrics_button)
+        export_group.setLayout(export_layout)
+        left_layout.addWidget(export_group)
+
+        left_layout.addStretch()
         left_panel.setLayout(left_layout)
 
-        # --- 右侧面板 (显示区域) ---
+        # --- 右侧面板 (与之前相同，包含图像显示和指标/绘图) ---
         right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)  # 右侧面板使用垂直布局
-
-        # 图像显示标签页
+        right_layout = QVBoxLayout(right_panel)
         image_tabs = QTabWidget()
-
-        self.orig_img_label = QLabel("原始图像")  # 显示原始图像的标签
-        self.orig_img_label.setAlignment(Qt.AlignCenter)
-        self.orig_img_label.setFixedSize(self.IMAGE_DISPLAY_WIDTH, self.IMAGE_DISPLAY_HEIGHT)
+        self.orig_img_label = QLabel("原始图像");
+        self.orig_img_label.setAlignment(Qt.AlignCenter);
+        self.orig_img_label.setFixedSize(self.IMAGE_DISPLAY_WIDTH, self.IMAGE_DISPLAY_HEIGHT);
         self.orig_img_label.setStyleSheet("border: 1px solid gray;")
         image_tabs.addTab(self.create_scrollable_label_wrapper(self.orig_img_label), "原始图像")
-
-        self.gt_img_label = QLabel("真实边缘图")  # 显示真实边缘图的标签
-        self.gt_img_label.setAlignment(Qt.AlignCenter)
-        self.gt_img_label.setFixedSize(self.IMAGE_DISPLAY_WIDTH, self.IMAGE_DISPLAY_HEIGHT)
+        self.gt_img_label = QLabel("真实边缘图");
+        self.gt_img_label.setAlignment(Qt.AlignCenter);
+        self.gt_img_label.setFixedSize(self.IMAGE_DISPLAY_WIDTH, self.IMAGE_DISPLAY_HEIGHT);
         self.gt_img_label.setStyleSheet("border: 1px solid gray;")
         image_tabs.addTab(self.create_scrollable_label_wrapper(self.gt_img_label), "真实边缘")
-
-        self.result_img_label = QLabel("算法输出边缘")  # 显示算法结果图像的标签
-        self.result_img_label.setAlignment(Qt.AlignCenter)
-        self.result_img_label.setFixedSize(self.IMAGE_DISPLAY_WIDTH, self.IMAGE_DISPLAY_HEIGHT)
+        self.result_img_label = QLabel("算法输出边缘");
+        self.result_img_label.setAlignment(Qt.AlignCenter);
+        self.result_img_label.setFixedSize(self.IMAGE_DISPLAY_WIDTH, self.IMAGE_DISPLAY_HEIGHT);
         self.result_img_label.setStyleSheet("border: 1px solid gray;")
         image_tabs.addTab(self.create_scrollable_label_wrapper(self.result_img_label), "算法结果")
-
-        image_tabs.setFixedHeight(self.IMAGE_DISPLAY_HEIGHT + 50)  # 为标签页栏留出一些额外高度
+        image_tabs.setFixedHeight(self.IMAGE_DISPLAY_HEIGHT + 50)
         right_layout.addWidget(image_tabs)
-
-        # 指标和绘图显示区域 (使用垂直分割器)
         results_splitter = QSplitter(Qt.Vertical)
-
-        # 评价指标表格
-        metrics_group = QGroupBox("评价指标")
-        metrics_layout = QVBoxLayout()
-        self.metrics_table = QTableWidget()  # 用于显示指标的表格
-        self.metrics_table.setColumnCount(2)
-        self.metrics_table.setHorizontalHeaderLabels(["指标名称", "值"])
-        self.metrics_table.setEditTriggers(QAbstractItemView.NoEditTriggers)  # 设置表格为只读
-        self.metrics_table.setAlternatingRowColors(True)  # 启用交替行颜色
-        metrics_layout.addWidget(self.metrics_table)
+        metrics_group = QGroupBox("评价指标");
+        metrics_layout = QVBoxLayout();
+        self.metrics_table = QTableWidget();
+        self.metrics_table.setColumnCount(2);
+        self.metrics_table.setHorizontalHeaderLabels(["指标名称", "值"]);
+        self.metrics_table.setEditTriggers(QAbstractItemView.NoEditTriggers);
+        self.metrics_table.setAlternatingRowColors(True);
+        metrics_layout.addWidget(self.metrics_table);
         metrics_group.setLayout(metrics_layout)
         results_splitter.addWidget(metrics_group)
-
-        # Matplotlib 绘图区域
-        plot_group = QGroupBox("指标可视化")
-        plot_layout = QVBoxLayout()
-        self.matplotlib_widget = MatplotlibWidget()  # 自定义的 Matplotlib 控件
-        plot_layout.addWidget(self.matplotlib_widget)
+        plot_group = QGroupBox("指标可视化");
+        plot_layout = QVBoxLayout();
+        self.matplotlib_widget = MatplotlibWidget();
+        plot_layout.addWidget(self.matplotlib_widget);
         plot_group.setLayout(plot_layout)
         results_splitter.addWidget(plot_group)
-
-        results_splitter.setSizes([180, 280])  # 设置表格和绘图区域的初始大小比例
+        results_splitter.setSizes([180, 280])
         right_layout.addWidget(results_splitter)
-
-        # 状态栏/日志区域
-        self.status_label = QTextEdit("状态: 就绪。请选择图像和算法。")  # 显示状态信息的文本编辑框
-        self.status_label.setReadOnly(True)  # 只读
-        self.status_label.setFixedHeight(80)  # 固定高度
+        self.status_label = QTextEdit("状态: 就绪。请选择图像和算法。");
+        self.status_label.setReadOnly(True);
+        self.status_label.setFixedHeight(80)
         right_layout.addWidget(self.status_label)
-
         right_panel.setLayout(right_layout)
 
-        # 主分割器 (左右面板)
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.addWidget(left_panel)
         main_splitter.addWidget(right_panel)
-        main_splitter.setSizes([380, 870])  # 设置左右面板的初始大小比例
-
+        main_splitter.setSizes([380, 870])
         main_layout.addWidget(main_splitter)
-        self.on_algo_changed(self.algo_combo.currentText())  # 根据当前选择的算法更新参数组的可见性
+        self.on_algo_changed(self.algo_combo.currentText())
 
     def create_scrollable_label_wrapper(self, label_widget):
-        """为 QLabel 创建一个可滚动的包装器，以防图像过大 (虽然这里 QLabel 是固定大小的)。"""
-        # from PyQt5.QtWidgets import QScrollArea # 如果需要滚动，取消注释
-        # scroll_area = QScrollArea()
-        # scroll_area.setWidgetResizable(True) # 允许内部 widget 调整大小
-        # scroll_area.setWidget(label_widget)
-        # return scroll_area
-        return label_widget  # 由于 QLabel 已固定大小，直接返回
+        return label_widget
 
     def load_dataset_list(self):
-        """加载数据集中的图像 ID 列表。"""
-        self.image_list_widget.clear()  # 清空旧列表
+        self.image_list_widget.clear()
         try:
-            # 假设 'dataset/data' 和 'dataset/bon' 位于 main.py 同级或已知相对路径
-            # 为了更稳健，您可能希望这些路径可配置或使用绝对路径
-            script_dir = os.path.dirname(os.path.abspath(__file__))  # gui 目录
-            base_dir = os.path.dirname(script_dir)  # EdgeEvalPro 项目根目录
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            base_dir = os.path.dirname(script_dir)
             data_dir = os.path.join(base_dir, "dataset/data")
             bon_dir = os.path.join(base_dir, "dataset/bon")
-
             image_ids = get_dataset_image_ids(data_dir, bon_dir)
             if image_ids:
                 self.image_list_widget.addItems(image_ids)
                 if self.image_list_widget.count() > 0:
-                    self.image_list_widget.setCurrentRow(0)  # 默认选中第一个
+                    self.image_list_widget.setCurrentRow(0)
             else:
                 self.update_status("数据集中未找到图像，或 data/bon 文件夹内容不匹配。", error=True)
         except Exception as e:
@@ -301,34 +302,34 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "错误", f"无法加载数据集列表: {e}")
 
     def on_image_selected(self, image_id_str):
-        """当用户在列表中选择一个图像 ID 时调用。"""
-        if not image_id_str:  # 如果没有选择任何项 (例如列表为空)
+        # --- 禁用导出按钮 ---
+        self.export_image_button.setEnabled(False)
+        self.export_metrics_button.setEnabled(False)
+        self.current_result_cv = None
+        self.current_displayed_metrics = None
+        # ---
+        if not image_id_str:
             self.current_original_cv = None
             self.current_ground_truth_cv = None
-            self.orig_img_label.clear()
+            self.orig_img_label.clear();
             self.gt_img_label.clear()
-            self.orig_img_label.setText("请选择一张图片")
+            self.orig_img_label.setText("请选择一张图片");
             self.gt_img_label.setText("请选择一张图片")
             return
-
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             base_dir = os.path.dirname(script_dir)
             data_dir = os.path.join(base_dir, "dataset/data")
             bon_dir = os.path.join(base_dir, "dataset/bon")
-
             self.current_original_cv, self.current_ground_truth_cv = \
                 load_image_and_ground_truth(image_id_str, data_dir, bon_dir)
-
             if self.current_original_cv is not None:
-                # 将 OpenCV 图像转换为 QPixmap 并显示
                 pixmap = cv_to_qpixmap(self.current_original_cv, self.IMAGE_DISPLAY_WIDTH, self.IMAGE_DISPLAY_HEIGHT)
                 self.orig_img_label.setPixmap(
                     pixmap.scaled(self.orig_img_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
             else:
                 self.orig_img_label.setText("加载原始图像失败")
                 self.update_status(f"加载图像 {image_id_str} 的原始图像失败。", error=True)
-
             if self.current_ground_truth_cv is not None:
                 pixmap_gt = cv_to_qpixmap(self.current_ground_truth_cv, self.IMAGE_DISPLAY_WIDTH,
                                           self.IMAGE_DISPLAY_HEIGHT)
@@ -337,56 +338,51 @@ class MainWindow(QMainWindow):
             else:
                 self.gt_img_label.setText("加载真实边缘图失败")
                 self.update_status(f"加载图像 {image_id_str} 的真实边缘图失败。", error=True)
-
-            self.result_img_label.clear()  # 清除上一次的结果图像
+            self.result_img_label.clear()
             self.result_img_label.setText("算法输出边缘")
-            self.clear_metrics_and_plot()  # 清除上一次的指标和绘图
+            self.clear_metrics_and_plot()
             self.update_status(f"已加载: {image_id_str}.jpg")
-
         except Exception as e:
             self.update_status(f"加载图像 {image_id_str} 时出错: {e}", error=True)
             QMessageBox.warning(self, "加载错误", f"无法加载图像 {image_id_str}: {e}")
 
     def on_algo_changed(self, algo_name):
-        """当选择的算法改变时，更新参数组的可见性。"""
         self.canny_params_group.setVisible(algo_name == "Canny")
         self.sobel_params_group.setVisible(algo_name == "Sobel")
         self.laplacian_params_group.setVisible(algo_name == "Laplacian")
         self.custom_algo_group.setVisible(algo_name == "Custom")
 
     def load_custom_script(self):
-        """打开文件对话框让用户选择自定义算法的 Python 脚本。"""
         options = QFileDialog.Options()
-        # options |= QFileDialog.DontUseNativeDialog # 如果需要非原生对话框
         fileName, _ = QFileDialog.getOpenFileName(self, "加载自定义 Python 脚本", "",
                                                   "Python 文件 (*.py);;所有文件 (*)", options=options)
         if fileName:
             self.custom_script_path = fileName
-            self.custom_script_label.setText(f"脚本: {os.path.basename(fileName)}")  # 显示脚本文件名
+            self.custom_script_label.setText(f"脚本: {os.path.basename(fileName)}")
             self.update_status(f"已加载自定义脚本: {fileName}")
-        else:  # 如果用户取消选择
+        else:
             self.custom_script_path = ""
             self.custom_script_label.setText("未加载脚本。")
 
     def run_evaluation(self):
-        """执行边缘检测和评价流程。"""
+        # --- 禁用导出按钮 ---
+        self.export_image_button.setEnabled(False)
+        self.export_metrics_button.setEnabled(False)
+        self.current_result_cv = None
+        self.current_displayed_metrics = None
+        # ---
         if self.processing_thread and self.processing_thread.isRunning():
             QMessageBox.warning(self, "正忙", "一个处理任务正在运行中，请稍候。")
             return
-
         if self.current_original_cv is None:
             QMessageBox.warning(self, "输入错误", "请先选择并加载一张原始图像。")
             return
-
-        # 真实边缘图对于评价是必需的
         if self.current_ground_truth_cv is None:
             QMessageBox.warning(self, "输入错误", "真实边缘图未加载，无法进行评价。")
             return
-
-        algo_name = self.algo_combo.currentText()  # 获取当前选择的算法名称
-        params = {}  # 用于存储算法参数的字典
-
-        try:  # 尝试获取并转换参数，处理可能的 ValueError
+        algo_name = self.algo_combo.currentText()
+        params = {}
+        try:
             if algo_name == "Canny":
                 params['threshold1'] = int(self.canny_thresh1.text())
                 params['threshold2'] = int(self.canny_thresh2.text())
@@ -405,62 +401,88 @@ class MainWindow(QMainWindow):
         except ValueError as ve:
             QMessageBox.critical(self, "参数错误", f"参数值无效: {ve}")
             return
-
-        # 更新UI，禁用按钮，显示处理中状态
-        self.run_button.setEnabled(False)
+        self.run_button.setEnabled(False);
         self.run_button.setText("处理中...")
         self.update_status(f"正在运行 {algo_name}...")
-        self.result_img_label.setText("处理中...")  # 结果图像标签显示处理中
-        self.clear_metrics_and_plot()  # 清除旧指标
-
-        # 创建并启动处理线程
+        self.result_img_label.setText("处理中...")
+        self.clear_metrics_and_plot()
         self.processing_thread = ProcessingThread(self.current_original_cv,
                                                   self.current_ground_truth_cv,
                                                   algo_name, params)
-        self.processing_thread.finished_signal.connect(self.on_processing_finished)  # 连接线程完成信号
-        self.processing_thread.start()  # 启动线程
+        self.processing_thread.finished_signal.connect(self.on_processing_finished)
+        self.processing_thread.start()
 
-    def on_processing_finished(self, result_img_cv, metrics, error_str):
-        """当处理线程完成时调用。"""
-        self.current_result_cv = result_img_cv  # 保存结果图像
+    def on_processing_finished(self, result_img_cv, metrics_from_binary,
+                               pr_recalls, pr_precisions, error_str):
+        self.current_result_cv = result_img_cv
+        self.current_displayed_metrics = metrics_from_binary  # 存储指标以供导出
 
-        if error_str:  # 如果有错误信息
+        current_algo_name = self.algo_combo.currentText()
+
+        if error_str:
             self.update_status(f"错误: {error_str}", error=True)
-            # 在结果图像标签处显示部分错误信息
             self.result_img_label.setText(f"错误:\n{error_str[:150]}...")
+            self.export_image_button.setEnabled(False)  # 出错则禁用导出图像
+            self.export_metrics_button.setEnabled(False)  # 出错则禁用导出指标
         else:
             self.update_status("处理和评价完成。")
+            if self.current_result_cv is not None:  # 仅当有结果图像时才启用导出图像按钮
+                self.export_image_button.setEnabled(True)
+            else:
+                self.export_image_button.setEnabled(False)
 
-        if self.current_result_cv is not None:  # 如果成功生成结果图像
+            if self.current_displayed_metrics and not (
+                    "错误" in self.current_displayed_metrics and self.current_displayed_metrics[
+                "错误"]):  # 仅当有有效指标时启用导出指标
+                self.export_metrics_button.setEnabled(True)
+            else:
+                self.export_metrics_button.setEnabled(False)
+
+        if self.current_result_cv is not None:
             pixmap_res = cv_to_qpixmap(self.current_result_cv, self.IMAGE_DISPLAY_WIDTH, self.IMAGE_DISPLAY_HEIGHT)
             self.result_img_label.setPixmap(
                 pixmap_res.scaled(self.result_img_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        elif not error_str:  # 没有错误但也没有结果图像
+        elif not error_str:
             self.result_img_label.setText("无结果图像")
 
-        if metrics:  # 如果有评价指标
-            self.display_metrics(metrics)
-            # 示例：使用条形图显示 Precision, Recall, F1。PR曲线需要更多数据点。
-            self.matplotlib_widget.plot_metrics_bar(metrics)
-        else:  # 如果没有指标 (可能是因为错误或真实图未加载)
-            self.clear_metrics_and_plot(message_if_empty="无指标可显示。")
+        plot_drawn = False
+        if pr_recalls and pr_precisions and len(pr_recalls) > 1 and len(pr_precisions) > 1:
+            try:
+                self.matplotlib_widget.plot_pr_curve(pr_precisions, pr_recalls, current_algo_name)
+                self.update_status(f"为 {current_algo_name} 绘制了PR曲线。")
+                plot_drawn = True
+            except Exception as e_plot:
+                self.update_status(f"绘制PR曲线时出错: {e_plot}", error=True)
+                self.matplotlib_widget.clear_plot()
 
-        # 恢复UI状态
+        if not plot_drawn:
+            if metrics_from_binary and not ("错误" in metrics_from_binary and metrics_from_binary["错误"]):
+                self.matplotlib_widget.plot_metrics_bar(metrics_from_binary)
+                self.update_status("绘制了指标条形图。")
+            else:
+                self.matplotlib_widget.clear_plot()
+                if self.matplotlib_widget.ax: self.matplotlib_widget.ax.set_title("无可用绘图数据")
+                self.matplotlib_widget.canvas.draw()
+
+        if metrics_from_binary:
+            self.display_metrics(metrics_from_binary)
+        else:
+            self.metrics_table.setRowCount(0)
+            if not error_str:
+                self.update_status("未能计算标准指标。", error=True)
+
         self.run_button.setEnabled(True)
         self.run_button.setText("运行评价")
-        self.processing_thread = None  # 清除线程引用
+        self.processing_thread = None
 
     def display_metrics(self, metrics_dict):
-        """在表格中显示评价指标。"""
-        self.metrics_table.setRowCount(0)  # 清除之前的表格内容
-        if not metrics_dict or ("错误" in metrics_dict and metrics_dict["错误"]):  # 检查字典是否有效或包含错误
+        self.metrics_table.setRowCount(0)
+        if not metrics_dict or ("错误" in metrics_dict and metrics_dict["错误"]):
             self.metrics_table.setRowCount(1)
             self.metrics_table.setItem(0, 0, QTableWidgetItem("错误"))
             self.metrics_table.setItem(0, 1, QTableWidgetItem(metrics_dict.get("错误", "未知的评价错误")))
             return
-
         row = 0
-        # 定义期望显示的指标顺序
         ordered_keys = [
             "TP", "FP", "FN",
             "查准率 (Precision)", "查全率 (Recall)", "F1分数 (F1-Score)",
@@ -470,50 +492,143 @@ class MainWindow(QMainWindow):
             if key in metrics_dict:
                 value = metrics_dict[key]
                 self.metrics_table.insertRow(row)
-                self.metrics_table.setItem(row, 0, QTableWidgetItem(str(key)))  # 指标名称
-                # 格式化数值显示
+                self.metrics_table.setItem(row, 0, QTableWidgetItem(str(key)))
                 if isinstance(value, float):
-                    if value == float('inf'):  # 处理 PSNR 可能为无穷大的情况
+                    if value == float('inf'):
                         value_str = "inf"
                     else:
                         value_str = f"{value:.4f}"
-                else:  # 对于 TP, FP, FN 等整数值
+                else:
                     value_str = str(value)
-                self.metrics_table.setItem(row, 1, QTableWidgetItem(value_str))  # 指标值
+                self.metrics_table.setItem(row, 1, QTableWidgetItem(value_str))
                 row += 1
-        self.metrics_table.resizeColumnsToContents()  # 自动调整列宽
+        self.metrics_table.resizeColumnsToContents()
 
     def clear_metrics_and_plot(self, message_if_empty="选择图像并运行评价。"):
-        """清除指标表格和Matplotlib绘图区域。"""
         self.metrics_table.setRowCount(0)
         self.matplotlib_widget.clear_plot()
-        if self.matplotlib_widget.ax:  # 确保ax存在
+        if self.matplotlib_widget.ax:
             self.matplotlib_widget.ax.set_title(message_if_empty)
             self.matplotlib_widget.canvas.draw()
 
     def update_status(self, message, error=False):
-        """更新状态栏/日志区域的文本。"""
         if error:
-            self.status_label.setTextColor(Qt.red)  # 错误信息用红色
+            self.status_label.setTextColor(Qt.red)
         else:
-            self.status_label.setTextColor(Qt.black)  # 正常信息用黑色 (或您的默认颜色)
-        self.status_label.append(message)  # 追加信息到日志
-        self.status_label.ensureCursorVisible()  # 自动滚动到底部
+            self.status_label.setTextColor(Qt.black)
+        self.status_label.append(message)
+        self.status_label.ensureCursorVisible()
+
+        # --- 新增：导出功能槽函数 ---
+
+    def handle_export_edge_image(self):
+        """处理导出算法生成的边缘图像为PNG文件。"""
+        if self.current_result_cv is None:
+            QMessageBox.warning(self, "导出错误", "没有可导出的边缘图像。请先运行算法。")
+            return
+
+        current_img_item = self.image_list_widget.currentItem()
+        if not current_img_item:
+            QMessageBox.warning(self, "导出错误", "未选择图像。")
+            return
+
+        image_id = current_img_item.text()
+        algo_name = self.algo_combo.currentText().replace(" ", "_").lower()
+        default_filename = f"{image_id}_{algo_name}_edges.png"
+
+        options = QFileDialog.Options()
+        # options |= QFileDialog.DontUseNativeDialog
+        filePath, _ = QFileDialog.getSaveFileName(self, "导出边缘图像为PNG", default_filename,
+                                                  "PNG 文件 (*.png);;所有文件 (*)", options=options)
+        if filePath:
+            try:
+                # OpenCV imwrite 需要 BGR 格式，但我们的边缘图通常是单通道灰度图
+                # 如果是单通道，imwrite 会正确处理
+                # 如果 current_result_cv 可能是彩色图（虽然这里不太可能），确保它是正确的
+                if self.current_result_cv.ndim == 3 and self.current_result_cv.shape[2] == 3:
+                    # 如果是BGR，则直接写入
+                    success = cv2.imwrite(filePath, self.current_result_cv)
+                elif self.current_result_cv.ndim == 2:
+                    # 如果是单通道灰度图，直接写入
+                    success = cv2.imwrite(filePath, self.current_result_cv)
+                else:
+                    self.update_status(f"错误: 无法识别的图像格式进行导出。", error=True)
+                    QMessageBox.critical(self, "导出失败", "无法识别的图像格式。")
+                    return
+
+                if success:
+                    self.update_status(f"边缘图像已成功导出到: {filePath}")
+                    QMessageBox.information(self, "导出成功", f"边缘图像已保存到:\n{filePath}")
+                else:
+                    self.update_status(f"错误: 未能导出边缘图像到: {filePath}", error=True)
+                    QMessageBox.critical(self, "导出失败", "未能保存图像。请检查文件路径和权限。")
+            except Exception as e:
+                self.update_status(f"导出边缘图像时发生错误: {e}", error=True)
+                QMessageBox.critical(self, "导出异常", f"导出图像时发生错误:\n{e}")
+
+    def handle_export_metrics_csv(self):
+        """处理导出评价指标为CSV文件。"""
+        if self.current_displayed_metrics is None or \
+                ("错误" in self.current_displayed_metrics and self.current_displayed_metrics["错误"]):
+            QMessageBox.warning(self, "导出错误", "没有有效的评价指标可导出。请先运行评价。")
+            return
+
+        current_img_item = self.image_list_widget.currentItem()
+        if not current_img_item:
+            QMessageBox.warning(self, "导出错误", "未选择图像。")
+            return
+
+        image_id = current_img_item.text()
+        algo_name = self.algo_combo.currentText().replace(" ", "_").lower()
+        default_filename = f"{image_id}_{algo_name}_metrics.csv"
+
+        options = QFileDialog.Options()
+        filePath, _ = QFileDialog.getSaveFileName(self, "导出评价指标为CSV", default_filename,
+                                                  "CSV 文件 (*.csv);;所有文件 (*)", options=options)
+        if filePath:
+            try:
+                # 将指标字典转换为适合CSV的格式 (两列：指标名称，值)
+                metrics_list = []
+                ordered_keys = [  # 与表格显示顺序一致
+                    "TP", "FP", "FN",
+                    "查准率 (Precision)", "查全率 (Recall)", "F1分数 (F1-Score)",
+                    "交并比 (IoU)", "SSIM", "PSNR (dB)"
+                ]
+                for key in ordered_keys:
+                    if key in self.current_displayed_metrics:
+                        metrics_list.append({"指标名称": key, "值": self.current_displayed_metrics[key]})
+
+                # 如果有其他不在ordered_keys中的指标也想导出，可以补充逻辑
+                # for key, value in self.current_displayed_metrics.items():
+                #     if key not in ordered_keys and key != "错误": # 排除错误信息
+                #         metrics_list.append({"指标名称": key, "值": value})
+
+                if not metrics_list:
+                    QMessageBox.warning(self, "导出错误", "没有可导出的指标数据。")
+                    return
+
+                df = pd.DataFrame(metrics_list)
+                df.to_csv(filePath, index=False, encoding='utf-8-sig')  # utf-8-sig 通常能更好处理Excel中的中文
+
+                self.update_status(f"评价指标已成功导出到: {filePath}")
+                QMessageBox.information(self, "导出成功", f"评价指标已保存到:\n{filePath}")
+            except Exception as e:
+                self.update_status(f"导出评价指标时发生错误: {e}", error=True)
+                QMessageBox.critical(self, "导出异常", f"导出指标时发生错误:\n{e}")
 
     def closeEvent(self, event):
-        """处理窗口关闭事件，确保子线程正确退出。"""
         if self.processing_thread and self.processing_thread.isRunning():
             reply = QMessageBox.question(self, '确认退出',
                                          "一个处理任务仍在运行中。您确定要退出吗？",
                                          QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if reply == QMessageBox.Yes:
                 self.update_status("正在尝试终止处理线程...")
-                self.processing_thread.terminate()  # 强制终止线程 (可能不安全)
-                self.processing_thread.wait(2000)  # 等待线程结束，设置超时
+                self.processing_thread.terminate()
+                self.processing_thread.wait(2000)
                 if self.processing_thread.isRunning():
                     self.update_status("警告: 处理线程未能及时终止。", error=True)
-                event.accept()  # 接受关闭事件
+                event.accept()
             else:
-                event.ignore()  # 忽略关闭事件，不关闭窗口
+                event.ignore()
         else:
-            event.accept()  # 没有运行中的线程，直接接受关闭
+            event.accept()
