@@ -34,9 +34,9 @@ class MatplotlibWidget(QWidget):
 
         labels = ['查准率', '查全率', 'F1分数']
         # 从字典中获取指标值，如果键不存在则默认为 0.0
-        values = [metrics_dict.get('查准率 (Precision)', 0.0),
-                  metrics_dict.get('查全率 (Recall)', 0.0),
-                  metrics_dict.get('F1分数 (F1-Score)', 0.0)]
+        values = [metrics_dict.get('Precision', 0.0),
+                  metrics_dict.get('Recall', 0.0),
+                  metrics_dict.get('F1-Score', 0.0)]
 
         bars = self.ax.bar(labels, values, color=['skyblue', 'lightcoral', 'lightgreen'])  # 绘制条形图
         self.ax.set_ylim(0, 1.05)  # 设置 Y 轴范围 (指标通常在 0-1 之间)
